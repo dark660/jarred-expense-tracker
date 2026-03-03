@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { supabase } from './db';
+import { getSupabase } from '../db';
 
 export default function SafeToSpend() {
     const [safeAmount, setSafeAmount] = useState(0);
@@ -10,10 +10,11 @@ export default function SafeToSpend() {
     }, []);
 
     const calculateBudget = async () => {
+        const supabase = getSupabase();
         const { data: txns } = await supabase.from('transactions').select('*');
 
         const monthlyLimit = 30000; // Let's say Govind sets this
-        const spentSoFar = txns?.reduce((acc, curr) => acc + curr.amount, 0) || 0;
+        const spentSoFar = txns?.reduce((acc: number, curr: { amount: number }) => acc + curr.amount, 0) || 0;
         const daysLeft = 30 - new Date().getDate(); // Simplified
 
         // The "Veteran" Formula
