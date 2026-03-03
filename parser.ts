@@ -50,7 +50,17 @@ CRITICAL RULES:
 1. Normalize merchant names (e.g., 'UPI/DR/123/ZOMATO/okicici' -> 'Zomato').
 2. Classify P2P UPI (e.g., sending money to a friend's VPA) as 'Transfers'.
 3. Never include PII (Account numbers, full Phone numbers) in the \`merchantName\`.
-4. Output strict JSON matching the provided schema.
+4. Output strict JSON matching this exact shape:
+{
+  "merchantName": string,
+  "category": string,
+  "amount": number,
+  "currency": string,
+  "txnType": "DEBIT" | "CREDIT",
+  "date": string | null,
+  "confidenceScore": number,
+  "isSubscription": boolean
+}
 `;
 
 type ParsedTransaction = {
@@ -176,39 +186,88 @@ function parseTransactionOffline(rawString: string): ParsedTransaction {
     };
 }
 
+async function parseWithGemini(rawString: string, apiKey: string) {
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+        model: 'gemini-3.1-flash',
+        contents: `Parse this transaction: "${rawString}"`,
+        config: {
+            systemInstruction: SYSTEM_INSTRUCTION,
+            responseMimeType: 'application/json',
+            responseSchema: transactionSchema,
+            temperature: 0.1,
+        }
+    });
+
+    if (!response.text) {
+        throw new Error('Received empty response from Gemini.');
+    }
+
+    return JSON.parse(response.text);
+}
+
+async function parseWithOpenRouter(rawString: string, apiKey: string) {
+    const model = process.env.OPENROUTER_MODEL || 'openrouter/auto';
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            ...(process.env.OPENROUTER_APP_NAME ? { 'X-Title': process.env.OPENROUTER_APP_NAME } : {}),
+        },
+        body: JSON.stringify({
+            model,
+            temperature: 0.1,
+            messages: [
+                { role: 'system', content: SYSTEM_INSTRUCTION },
+                { role: 'user', content: `Parse this transaction and respond with strict JSON only: "${rawString}"` },
+            ],
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`OpenRouter request failed: ${response.status} ${response.statusText}`);
+    }
+
+    const payload: any = await response.json();
+    const content = payload?.choices?.[0]?.message?.content;
+    if (!content || typeof content !== 'string') {
+        throw new Error('OpenRouter returned empty content.');
+    }
+
+    // Accept pure JSON or JSON wrapped in markdown fences.
+    const jsonCandidate = content.includes('{')
+        ? content.slice(content.indexOf('{'), content.lastIndexOf('}') + 1)
+        : content;
+
+    return JSON.parse(jsonCandidate);
+}
+
 /**
  * Parses a raw transaction string into structured JSON.
- * Uses Gemini when API key is present, otherwise falls back to local heuristic parsing.
+ * Provider order: Gemini -> OpenRouter -> local heuristic fallback.
  */
 export async function parseTransaction(rawString: string) {
-    try {
-        const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    const openRouterKey = process.env.OPENROUTER_API_KEY;
 
-        if (!apiKey) {
-            console.warn('⚠️ Gemini API key not found. Falling back to offline parser.');
-            return parseTransactionOffline(rawString);
+    if (geminiKey) {
+        try {
+            return await parseWithGemini(rawString, geminiKey);
+        } catch (error) {
+            console.warn('⚠️ Gemini parsing failed. Falling back to next provider.', error);
         }
-
-        const ai = new GoogleGenAI({ apiKey });
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-3.1-flash',
-            contents: `Parse this transaction: "${rawString}"`,
-            config: {
-                systemInstruction: SYSTEM_INSTRUCTION,
-                responseMimeType: 'application/json',
-                responseSchema: transactionSchema,
-                temperature: 0.1,
-            }
-        });
-
-        if (!response.text) {
-            throw new Error('Received empty response from Gemini.');
-        }
-
-        return JSON.parse(response.text);
-    } catch (error) {
-        console.error('❌ Transaction Parsing Failed:', error);
-        throw error;
     }
+
+    if (openRouterKey) {
+        try {
+            return await parseWithOpenRouter(rawString, openRouterKey);
+        } catch (error) {
+            console.warn('⚠️ OpenRouter parsing failed. Falling back to offline parser.', error);
+        }
+    }
+
+    console.warn('⚠️ No AI provider key found. Falling back to offline parser.');
+    return parseTransactionOffline(rawString);
 }
