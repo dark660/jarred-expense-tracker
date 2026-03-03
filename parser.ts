@@ -1,7 +1,6 @@
 import { GoogleGenAI, Type, Schema } from '@google/genai';
 
-// Initialize the Gemini client. Automatically picks up GEMINI_API_KEY from environment.
-const ai = new GoogleGenAI({});
+// We defer Gemini client initialization so Render servers don't crash on startup if the key isn't set yet.
 
 // 1. Define the strict JSON Schema for Gemini to adhere to
 const transactionSchema: Schema = {
@@ -61,6 +60,10 @@ CRITICAL RULES:
  */
 export async function parseTransaction(rawString: string) {
     try {
+        // Initialize AI client only when actually parsing.
+        // It strictly requires GEMINI_API_KEY to be set in the environment variables (e.g. Render dashboard)
+        const ai = new GoogleGenAI({});
+
         const response = await ai.models.generateContent({
             model: 'gemini-3.1-flash',
             contents: `Parse this transaction: "${rawString}"`,
@@ -73,7 +76,7 @@ export async function parseTransaction(rawString: string) {
         });
 
         if (!response.text) {
-             throw new Error("Received empty response from Gemini.");
+            throw new Error("Received empty response from Gemini.");
         }
 
         // The response is guaranteed to match our Schema
