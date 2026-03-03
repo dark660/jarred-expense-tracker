@@ -1,16 +1,27 @@
 import { createClient } from '@supabase/supabase-js'
 
-// Veteran Tip: Never hardcode keys. Bun/Node reads these from your .env file
-const supabaseUrl = process.env.SUPABASE_URL!
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY!
+let supabaseInstance: any = null;
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const getSupabase = () => {
+    if (!supabaseInstance) {
+        const supabaseUrl = process.env.SUPABASE_URL;
+        const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+
+        if (!supabaseUrl || !supabaseAnonKey) {
+            throw new Error("Supabase credentials missing. Ensure SUPABASE_URL and SUPABASE_ANON_KEY are set.");
+        }
+
+        supabaseInstance = createClient(supabaseUrl, supabaseAnonKey);
+    }
+    return supabaseInstance;
+};
 
 /**
  * Saves a parsed transaction into Supabase.
  * Uses 'upsert' to prevent duplicates in our CUG data.
  */
 export async function insertTransaction(userId: string, data: any) {
+    const supabase = getSupabase();
     const { error } = await supabase
         .from('transactions')
         .upsert({
