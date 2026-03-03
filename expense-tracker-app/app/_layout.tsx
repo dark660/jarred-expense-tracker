@@ -3,10 +3,15 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { useEffect, useState } from 'react';
-import { getSupabase } from '../db';
-import { Session } from '@supabase/supabase-js';
-
 import { useColorScheme } from '@/hooks/use-color-scheme';
+
+let getSupabaseSafe: (() => any) | null = null;
+try {
+  const db = require('../db');
+  getSupabaseSafe = db.getSupabase;
+} catch (e) {
+  console.warn('Could not load db module:', e);
+}
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -14,37 +19,43 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<any>(null);
+  const [isReady, setIsReady] = useState(false);
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
-    const supabase = getSupabase();
+    const init = async () => {
+      try {
+        if (getSupabaseSafe) {
+          const supabase = getSupabaseSafe();
+          const { data: { session } } = await supabase.auth.getSession();
+          setSession(session);
 
-    // Check active session on mount
-    supabase.auth.getSession().then(({ data: { session } }: any) => {
-      setSession(session);
-    });
-
-    // Listen to Auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
-      setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
+          supabase.auth.onAuthStateChange((_event: any, session: any) => {
+            setSession(session);
+          });
+        }
+      } catch (err) {
+        console.error('Auth init error:', err);
+      } finally {
+        setIsReady(true);
+      }
+    };
+    init();
   }, []);
 
   useEffect(() => {
+    if (!isReady) return;
+
     const inAuthGroup = segments[0] === '(tabs)';
 
     if (!session && inAuthGroup) {
-      // Redirect to the login page if not authenticated
       router.replace('/login');
     } else if (session && segments[0] === 'login') {
-      // Redirect to main app if already authenticated
       router.replace('/(tabs)');
     }
-  }, [session, segments]);
+  }, [session, segments, isReady]);
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
