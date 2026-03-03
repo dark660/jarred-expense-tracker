@@ -2,14 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { Wallet, Zap } from 'lucide-react-native';
+import { Wallet, Zap, History } from 'lucide-react-native';
 import { getSupabase } from '../../db';
 
 export default function JarredHome() {
   const [safeToSpend, setSafeToSpend] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  // 1. Logic to calculate Safe-to-Spend from Supabase
+  // Logic to calculate Safe-to-Spend
   const refreshBudget = async () => {
     try {
       const supabase = getSupabase();
@@ -20,10 +20,13 @@ export default function JarredHome() {
         return;
       }
 
-      const monthlyLimit = 30000; // This can be dynamic later
+      const monthlyLimit = 30000;
       const spent = txns?.reduce((acc: any, curr: any) => acc + curr.amount, 0) || 0;
-      const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
-      const daysLeft = daysInMonth - new Date().getDate();
+
+      // Math: (Limit - Spent) / Days Remaining
+      const now = new Date();
+      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      const daysLeft = daysInMonth - now.getDate();
 
       setSafeToSpend(Math.max(0, (monthlyLimit - spent) / (daysLeft || 1)));
     } catch (err) {
@@ -33,31 +36,29 @@ export default function JarredHome() {
 
   useEffect(() => { refreshBudget(); }, []);
 
-  // 2. The "Brain" Trigger
-  const handleAnalyze = async () => {
+  const handleScan = async () => {
     const text = await Clipboard.getStringAsync();
     if (!text || text.length < 10) return Alert.alert("Nothing to parse", "Copy a bank SMS first!");
 
     setLoading(true);
     try {
-      // Using the confirmed Render API endpoint
-      const response = await fetch('https://jarred-api.onrender.com/parse', {
+      // Connects to your live Render "Brain"
+      const response = await fetch('https://jarred-api.onrender.com/parse', { // using correct API endpoint
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rawText: text })
       });
 
       if (response.ok) {
-        const result = await response.json();
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        await refreshBudget(); // Update the UI immediately
-        Alert.alert("Success", `Transaction added to your history.\nSpent ₹${result?.data?.amount || ''} at ${result?.data?.merchantName || 'merchant'}`);
+        await refreshBudget(); // Instant UI update
+        Alert.alert("Success", "Transaction analyzed and saved.");
       } else {
         const result = await response.json();
         throw new Error(result.error);
       }
     } catch (e: any) {
-      Alert.alert("Connection Error", e.message || "Ensure your Render server is live!");
+      Alert.alert("Connection Error", e.message || "The AI takes a moment to wake up on the free tier. Try again in 10s!");
     } finally {
       setLoading(false);
     }
@@ -67,37 +68,41 @@ export default function JarredHome() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Zap color="#6c5ce7" fill="#6c5ce7" size={24} />
-        <Text style={styles.brand}>JARRED</Text>
+        <Text style={styles.brandText}>JARRED</Text>
       </View>
 
       <View style={styles.mainCard}>
         <Text style={styles.label}>AVAILABLE FOR TODAY</Text>
         <Text style={styles.amount}>₹{safeToSpend.toFixed(0)}</Text>
-        <View style={styles.divider} />
-        <Text style={styles.subtext}>Based on your ₹30k monthly goal</Text>
+        <View style={styles.pill}>
+          <Text style={styles.pillText}>Safe Limit</Text>
+        </View>
       </View>
 
-      <TouchableOpacity style={styles.actionButton} onPress={handleAnalyze} disabled={loading}>
-        {loading ? <ActivityIndicator color="#fff" /> : (
-          <>
-            <Wallet color="#fff" size={20} style={{ marginRight: 10 }} />
-            <Text style={styles.buttonText}>Scan Clipboard SMS</Text>
-          </>
-        )}
-      </TouchableOpacity>
+      <View style={styles.buttonContainer}>
+        <TouchableOpacity style={styles.scanButton} onPress={handleScan} disabled={loading}>
+          {loading ? <ActivityIndicator color="#fff" /> : (
+            <>
+              <Wallet color="#fff" size={20} style={{ marginRight: 12 }} />
+              <Text style={styles.buttonText}>Scan Clipboard</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000', padding: 25, justifyContent: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 40, position: 'absolute', top: 60, left: 25 },
-  brand: { color: '#fff', fontSize: 20, fontWeight: '900', marginLeft: 8, letterSpacing: 1 },
-  mainCard: { backgroundColor: '#111', padding: 40, borderRadius: 32, borderColor: '#222', borderStyle: 'solid', borderWidth: 1, alignItems: 'center' },
-  label: { color: '#666', fontSize: 12, fontWeight: '700', letterSpacing: 2 },
-  amount: { color: '#fff', fontSize: 72, fontWeight: '900', marginVertical: 10 },
-  divider: { width: 40, height: 4, backgroundColor: '#6c5ce7', borderRadius: 2, marginVertical: 15 },
-  subtext: { color: '#444', fontSize: 13 },
-  actionButton: { backgroundColor: '#6c5ce7', height: 70, borderRadius: 20, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 30 },
-  buttonText: { color: '#fff', fontSize: 18, fontWeight: '700' }
+  container: { flex: 1, backgroundColor: '#050505', padding: 25, justifyContent: 'center' },
+  header: { position: 'absolute', top: 60, left: 25, flexDirection: 'row', alignItems: 'center' },
+  brandText: { color: '#fff', fontSize: 22, fontWeight: '900', marginLeft: 10, letterSpacing: 1 },
+  mainCard: { backgroundColor: '#111', padding: 45, borderRadius: 35, alignItems: 'center', borderColor: '#222', borderWidth: 1 },
+  label: { color: '#555', fontSize: 12, fontWeight: '800', letterSpacing: 2, marginBottom: 10 },
+  amount: { color: '#fff', fontSize: 84, fontWeight: '900' },
+  pill: { backgroundColor: '#6c5ce720', paddingHorizontal: 15, paddingVertical: 5, borderRadius: 20, marginTop: 15 },
+  pillText: { color: '#6c5ce7', fontSize: 12, fontWeight: '700' },
+  buttonContainer: { marginTop: 40 },
+  scanButton: { backgroundColor: '#6c5ce7', height: 75, borderRadius: 22, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
+  buttonText: { color: '#fff', fontSize: 18, fontWeight: '800' }
 });
