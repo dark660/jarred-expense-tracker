@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { Wallet, Zap, History } from 'lucide-react-native';
+import { Wallet, Zap } from 'lucide-react-native';
 import { getSupabase } from '../../db';
 
 export default function JarredHome() {
