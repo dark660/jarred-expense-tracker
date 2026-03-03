@@ -1,4 +1,5 @@
-import { GoogleGenAI, Type, Schema } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
+import type { Schema } from '@google/genai';
 
 // We defer Gemini client initialization so Render servers don't crash on startup if the key isn't set yet.
 
@@ -62,7 +63,12 @@ export async function parseTransaction(rawString: string) {
     try {
         // Initialize AI client only when actually parsing.
         // It strictly requires GEMINI_API_KEY to be set in the environment variables (e.g. Render dashboard)
-        const ai = new GoogleGenAI({});
+        const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+        if (!apiKey) {
+            throw new Error('Gemini API key is missing. Set GEMINI_API_KEY (or GOOGLE_API_KEY) before parsing transactions.');
+        }
+
+        const ai = new GoogleGenAI({ apiKey });
 
         const response = await ai.models.generateContent({
             model: 'gemini-3.1-flash',
