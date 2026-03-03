@@ -1,8 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import type { Schema } from '@google/genai';
 
-// We defer Gemini client initialization so Render servers don't crash on startup if the key isn't set yet.
-
 // 1. Define the strict JSON Schema for Gemini to adhere to
 const transactionSchema: Schema = {
     type: Type.OBJECT,
@@ -55,17 +53,140 @@ CRITICAL RULES:
 4. Output strict JSON matching the provided schema.
 `;
 
+type ParsedTransaction = {
+    merchantName: string;
+    category: string;
+    amount: number;
+    currency: string;
+    txnType: 'DEBIT' | 'CREDIT';
+    date: string | null;
+    confidenceScore: number;
+    isSubscription: boolean;
+};
+
+function titleCase(value: string) {
+    return value
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
+function detectMerchant(raw: string): string {
+    const lower = raw.toLowerCase();
+
+    if (lower.includes('salary') || lower.includes('credited')) return 'Bank Credit';
+
+    const toMatch = [
+        /(?:spent on|paid to|payment to|to)\s+([a-z0-9@._/-]+)/i,
+        /upi\/dr\/[^/]+\/([^/]+)/i,
+        /nach\/([^/]+)/i,
+        /at\s+([a-z0-9& ._-]+)/i,
+        /by\s+([a-z0-9& ._-]+)/i,
+    ];
+
+    for (const pattern of toMatch) {
+        const match = raw.match(pattern);
+        if (match?.[1]) {
+            const cleaned = match[1]
+                .replace(/@.*/g, '')
+                .replace(/[^a-zA-Z0-9\s&.-]/g, ' ')
+                .trim();
+            if (cleaned) return titleCase(cleaned);
+        }
+    }
+
+    return 'Unknown Merchant';
+}
+
+function detectAmount(raw: string): number {
+    const normalized = raw.replace(/,/g, '');
+
+    const currencyMatch = normalized.match(/(?:₹|inr\s*)(\d+(?:\.\d+)?)/i);
+    if (currencyMatch?.[1]) return Number(currencyMatch[1]);
+
+    const decimalMatches = [...normalized.matchAll(/(\d+\.\d{1,2})/g)].map((m) => Number(m[1]));
+    if (decimalMatches.length > 0) return decimalMatches[decimalMatches.length - 1];
+
+    const allNumbers = [...normalized.matchAll(/\b(\d{2,})\b/g)]
+        .map((m) => Number(m[1]))
+        .filter((n) => n < 1000000);
+
+    if (allNumbers.length > 0) return allNumbers[allNumbers.length - 1];
+
+    return 0;
+}
+
+function detectTxnType(raw: string): 'DEBIT' | 'CREDIT' {
+    const lower = raw.toLowerCase();
+    if (/(credited|received|deposit|salary)/.test(lower)) return 'CREDIT';
+    return 'DEBIT';
+}
+
+function detectDate(raw: string): string | null {
+    const match = raw.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+    if (!match) return null;
+
+    const day = Number(match[1]);
+    const month = Number(match[2]) - 1;
+    let year = Number(match[3]);
+    if (year < 100) year += 2000;
+
+    const parsed = new Date(Date.UTC(year, month, day));
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function detectSubscription(raw: string): boolean {
+    return /(nach|autopay|subscription|emi|sip|netflix|spotify|prime)/i.test(raw);
+}
+
+function detectCategory(raw: string, merchant: string, txnType: 'DEBIT' | 'CREDIT', isSubscription: boolean): string {
+    const lower = `${raw} ${merchant}`.toLowerCase();
+
+    if (txnType === 'CREDIT') return 'Income';
+    if (isSubscription) return 'Subscriptions';
+    if (/(upi|transfer|sent|rent|friend|p2p)/.test(lower)) return 'Transfers';
+    if (/(zomato|swiggy|food|restaurant|cafe)/.test(lower)) return 'Food & Dining';
+    if (/(uber|ola|metro|fuel|petrol|transport|travel)/.test(lower)) return 'Transportation';
+    if (/(grocery|mart|supermarket|dmart|bigbasket|blinkit|zepto)/.test(lower)) return 'Groceries';
+    if (/(electricity|water|gas|bill|utility|recharge|broadband|wifi)/.test(lower)) return 'Utilities';
+    if (/(amazon|flipkart|myntra|shopping)/.test(lower)) return 'Shopping';
+
+    return 'Unknown';
+}
+
+function parseTransactionOffline(rawString: string): ParsedTransaction {
+    const merchantName = detectMerchant(rawString);
+    const amount = detectAmount(rawString);
+    const txnType = detectTxnType(rawString);
+    const date = detectDate(rawString);
+    const isSubscription = detectSubscription(rawString);
+    const category = detectCategory(rawString, merchantName, txnType, isSubscription);
+
+    return {
+        merchantName,
+        category,
+        amount,
+        currency: 'INR',
+        txnType,
+        date,
+        confidenceScore: 0.65,
+        isSubscription,
+    };
+}
+
 /**
  * Parses a raw transaction string into structured JSON.
- * @param rawString The raw bank SMS or PDF row
+ * Uses Gemini when API key is present, otherwise falls back to local heuristic parsing.
  */
 export async function parseTransaction(rawString: string) {
     try {
-        // Initialize AI client only when actually parsing.
-        // It strictly requires GEMINI_API_KEY to be set in the environment variables (e.g. Render dashboard)
         const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+
         if (!apiKey) {
-            throw new Error('Gemini API key is missing. Set GEMINI_API_KEY (or GOOGLE_API_KEY) before parsing transactions.');
+            console.warn('⚠️ Gemini API key not found. Falling back to offline parser.');
+            return parseTransactionOffline(rawString);
         }
 
         const ai = new GoogleGenAI({ apiKey });
@@ -77,20 +198,17 @@ export async function parseTransaction(rawString: string) {
                 systemInstruction: SYSTEM_INSTRUCTION,
                 responseMimeType: 'application/json',
                 responseSchema: transactionSchema,
-                temperature: 0.1, // Low temperature for deterministic, factual extraction
+                temperature: 0.1,
             }
         });
 
         if (!response.text) {
-            throw new Error("Received empty response from Gemini.");
+            throw new Error('Received empty response from Gemini.');
         }
 
-        // The response is guaranteed to match our Schema
-        const cleanedTxn = JSON.parse(response.text);
-        return cleanedTxn;
-
+        return JSON.parse(response.text);
     } catch (error) {
-        console.error("❌ Transaction Parsing Failed:", error);
+        console.error('❌ Transaction Parsing Failed:', error);
         throw error;
     }
 }
