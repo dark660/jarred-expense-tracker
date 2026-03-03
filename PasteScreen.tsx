@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import { getSupabase } from './db';
 
 export default function PasteScreen() {
     const [loading, setLoading] = useState(false);
@@ -16,12 +17,21 @@ export default function PasteScreen() {
                 return;
             }
 
-            // 2. Call your Node API 
-            // Replace with your local machine's IP address (e.g. http://192.168.1.5:3000/parse)
-            const response = await fetch('https://jarred-api.onrender.com/parse', {
+            const supabase = getSupabase();
+            const { data: { session } } = await supabase.auth.getSession();
+
+            if (!session?.access_token) {
+                throw new Error('Please log in again to analyze transactions.');
+            }
+
+            const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://jarred-api.onrender.com';
+            const response = await fetch(`${apiBaseUrl}/parse`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rawText: text, userId: 'cug-user-1' })
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.access_token}`,
+                },
+                body: JSON.stringify({ rawText: text })
             });
 
             const result = await response.json();

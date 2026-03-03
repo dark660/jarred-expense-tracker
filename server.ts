@@ -1,15 +1,30 @@
 import express from 'express';
 import cors from 'cors';
 import { parseTransaction } from './parser';
-import { insertTransaction } from './db';
+import { getSupabase, insertTransaction } from './db';
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: process.env.APP_ORIGIN || '*' }));
 app.use(express.json());
 
 app.post('/parse', async (req, res) => {
     try {
-        const { rawText, userId = 'cug-user-1' } = req.body;
+        const { rawText } = req.body;
+        const authHeader = req.headers.authorization;
+
+        if (!authHeader?.startsWith('Bearer ')) {
+            return res.status(401).json({ success: false, error: 'Missing bearer token' });
+        }
+
+        const accessToken = authHeader.slice('Bearer '.length);
+        const supabase = getSupabase();
+        const { data: authData, error: authError } = await supabase.auth.getUser(accessToken);
+
+        if (authError || !authData.user) {
+            return res.status(401).json({ success: false, error: 'Invalid access token' });
+        }
+
+        const userId = authData.user.id;
 
         if (!rawText) {
             return res.status(400).json({ success: false, error: 'rawText is required' });
