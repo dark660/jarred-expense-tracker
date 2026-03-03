@@ -10,7 +10,7 @@ export default function Index() {
             router.replace('/(tabs)');
         }, 100);
         return () => clearTimeout(timeout);
-    }, []);
+    }, [router]);
 
     return (
         <View style={{ flex: 1, backgroundColor: '#050505', justifyContent: 'center', alignItems: 'center' }}>

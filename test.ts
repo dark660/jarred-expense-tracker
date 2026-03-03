@@ -20,10 +20,8 @@ const testCases = [
 async function runTests() {
     console.log("🚀 Starting parser tests...");
 
-    if (!process.env.GEMINI_API_KEY) {
-        console.error("⚠️ GEMINI_API_KEY environment variable is missing.");
-        console.error("Please set it to run the tests.");
-        return;
+    if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY && !process.env.OPENROUTER_API_KEY) {
+        console.warn('⚠️ No AI provider key found. Tests will run using offline parser fallback.');
     }
 
     for (const txn of testCases) {
