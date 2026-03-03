@@ -42,10 +42,20 @@ export default function JarredHome() {
 
     setLoading(true);
     try {
-      // Connects to your live Render "Brain"
-      const response = await fetch('https://jarred-api.onrender.com/parse', { // using correct API endpoint
+      const supabase = getSupabase();
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error('Please log in again to scan transactions.');
+      }
+
+      const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://jarred-api.onrender.com';
+      const response = await fetch(`${apiBaseUrl}/parse`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({ rawText: text })
       });
 
