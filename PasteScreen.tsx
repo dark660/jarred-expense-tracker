@@ -18,7 +18,7 @@ export default function PasteScreen() {
 
             // 2. Call your Node API 
             // Replace with your local machine's IP address (e.g. http://192.168.1.5:3000/parse)
-            const response = await fetch('http://localhost:3000/parse', {
+            const response = await fetch('https://jarred-api.onrender.com/parse', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ rawText: text, userId: 'cug-user-1' })
