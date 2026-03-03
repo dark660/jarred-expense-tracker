@@ -38,7 +38,7 @@ export default function RootLayout() {
     } else if (session && segments[0] === 'login') {
       router.replace('/(tabs)');
     }
-  }, [session, segments, isReady]);
+  }, [session, segments, isReady, router]);
 
   return (
     <ThemeProvider value={DarkTheme}>
